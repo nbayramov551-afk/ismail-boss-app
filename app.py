@@ -1,229 +1,348 @@
-import os, requests, threading, random, time, base64, subprocess
-from flask import Flask, render_template_string, request, redirect, session, jsonify
-from concurrent.futures import ThreadPoolExecutor
-
-# 🔐 SUPREMACY ENCRYPTION (50+ NODES)
-_0x_sec = "aXNtYWlsLjIwMDQ=" 
-_0x_targets = [
-    "aHR0cHM6Ly93d3cuZXBvcm5lci5jb20vYXBpL3YyL3ZpZGVvL3NlYXJjaC8/cXVlcnk9",
-    "aHR0cHM6Ly93d3cucmVkdHViZS5jb20vYXBpL2RhdGE/ZGF0YT1zZWFyY2gmc2VhcmNoPQ==",
-    "aHR0cHM6Ly93d3cuYmVsbGFyZXNzYS5jb20vYXBpL3YxL3ZpZGVvcz9zZWFyY2g9",
-    "aHR0cHM6Ly9wdXJlY2FzaC5jb20vYXBpL3NlYXJjaD9xPQ=="
-]
-
-def _decrypt(data): return base64.b64decode(data).decode()
+from flask import Flask, render_template_string, request, jsonify, send_from_directory
+import yt_dlp, os, threading, uuid, socket, requests, qrcode, datetime
+from fpdf import FPDF
 
 app = Flask(__name__)
-app.secret_key = os.urandom(65536) 
-SAVE_PATH = "/sdcard/Download/Titanic-8K-Ultra/"
-if not os.path.exists(SAVE_PATH): os.makedirs(SAVE_PATH, exist_ok=True)
+app.secret_key = "ares_v600_ultimate_2026"
 
-# 🛡️ GHOST PROTOCOL - Reklam və İzləməni Məhv Edir
-def ghost_protocol():
-    while True:
-        try:
-            os.system("rm -rf ~/.cache/* > /dev/null 2>&1")
-            os.system("find /sdcard/ -name '*.ads' -delete > /dev/null 2>&1")
-        except: pass
-        time.sleep(1)
+# --- STRUKTUR ---
+BASE = os.path.expanduser('~/.ares_v600')
+PATHS = {
+    "vault": os.path.join(BASE, 'vault'),
+    "qr": os.path.join(BASE, 'qr'),
+    "docs": os.path.join(BASE, 'docs')
+}
+for p in PATHS.values(): os.makedirs(p, exist_ok=True)
 
-threading.Thread(target=ghost_protocol, daemon=True).start()
+# --- GLOBAL STATUS ---
+DL_DATA = {"p": "0%", "s": "0 KB/s", "status": "Hazır", "title": ""}
 
-def ultra_hd_filter(url):
+# --- TUNNEL ---
+print("\n" + "⚔️ " * 15)
+TUNNEL_URL = input("🔗 SSH Link (Boşdursa Enter): ").strip()
+MY_IP = TUNNEL_URL if TUNNEL_URL else f"http://{socket.gethostbyname(socket.gethostname())}:5000"
+print(f"📡 ARES SUPREME AKTİVDİR: {MY_IP}")
+print("⚔️ " * 15 + "\n")
+
+# --- BACKEND API ---
+@app.route('/api/rates')
+def get_rates():
     try:
-        h = {"User-Agent": f"Titanic-Ultra-{random.randint(100,999)}"}
-        r = requests.get(url, headers=h, timeout=6).json()
-        raw = r.get('videos', []) or r.get('search', []) or r.get('data', [])
-        clean = []
-        for v in raw:
-            # 🛑 QUALITY FILTER: Aşağı keyfiyyəti bloklayır
-            quality_score = v.get('quality', 'hd').lower()
-            if 'hd' in quality_score or '1080' in quality_score or '4k' in quality_score:
-                u = v.get('url') or v.get('video_url')
-                if u:
-                    clean.append({
-                        'id': str(v.get('id', random.getrandbits(32))),
-                        't': v.get('title', 'ULTRA_HD_CONTENT').upper(),
-                        'e': u.replace("video-", "embed/").replace("watch?v=", "embed/"),
-                        'd': u,
-                        'm': v.get('default_thumb', {}).get('src') or v.get('thumb'),
-                        'q': "8K IMAX-ULTRA" if '4k' in quality_score else "4K PREMIUM"
-                    })
-        return clean
-    except: return []
+        # Bütün dünya valyutaları üçün genişləndirilmiş siyahı
+        r = requests.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=2)
+        data = r.json()
+        data['date_now'] = datetime.datetime.now().strftime("%d.%m.%Y | %H:%M:%S")
+        return jsonify(data)
+    except: 
+        return jsonify({"rates": {"AZN": 1.70, "RUB": 95.5, "TRY": 35.8, "USD": 1.0, "EUR": 0.92, "GBP": 0.79}, "date_now": "OFFLINE"})
 
-def global_vortex_search(query):
-    urls = []
-    # 8K və 4K üçün gizli teqlər əlavə edilir
-    enhanced_query = f"{query}+8k+4k+ultra+hd"
-    for base in _0x_targets:
-        target = _decrypt(base)
-        for p in range(1, 20): # 20 Səhifə dərinlik
-            urls.append(f"{target}{enhanced_query}&page={p}&per_page=100")
+@app.route('/api/dl')
+def dl():
+    u = request.args.get('u')
+    mode = request.args.get('m')
+    qual = request.args.get('q', 'best')
     
-    final_results = []
-    with ThreadPoolExecutor(max_workers=300) as executor:
-        futures = [executor.submit(ultra_hd_filter, u) for u in urls]
-        for f in futures: final_results.extend(f.result())
-    
-    random.shuffle(final_results)
-    return final_results[:2500]
+    def progress_hook(d):
+        if d['status'] == 'downloading':
+            p = d.get('_percent_str', '0%').replace(' ', '')
+            s = d.get('_speed_str', '0 KB/s')
+            DL_DATA.update({"p": p, "s": s, "status": "Yüklənir...", "title": d.get('filename', 'Fayl').split('/')[-1]})
+        elif d['status'] == 'finished':
+            DL_DATA.update({"p": "100%", "status": "Tamamlandı!"})
 
-# 📱 SUPREMACY UI (PREMIUM DESIGN)
-UI = """
+    def run_dl():
+        opts = {
+            'outtmpl': f"{PATHS['vault']}/%(title)s.%(ext)s",
+            'progress_hooks': [progress_hook],
+            'quiet': True
+        }
+        if mode == 'mp3':
+            opts.update({'format': 'bestaudio/best', 'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}]})
+        else:
+            opts.update({'format': f'bestvideo[height<={qual}]+bestaudio/best/best' if qual != 'best' else 'best'})
+        
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl: ydl.download([u])
+        except: DL_DATA.update({"status": "Xəta!"})
+
+    threading.Thread(target=run_dl).start()
+    return jsonify({"ok": True})
+
+@app.route('/api/qr', methods=['POST'])
+def qr_gen():
+    m = request.form.get('m')
+    qr_fn = f"qr_{uuid.uuid4().hex}.png"
+    if m == 'txt':
+        d = request.form.get('d')
+    else:
+        f = request.files['f']
+        f_fn = f"img_{uuid.uuid4().hex}.png"
+        f.save(os.path.join(PATHS['qr'], f_fn))
+        d = f"{MY_IP}/f/qr/{f_fn}"
+    
+    img = qrcode.make(d)
+    img.save(os.path.join(PATHS['qr'], qr_fn))
+    return jsonify({"f": qr_fn})
+
+@app.route('/api/cv', methods=['POST'])
+def mk_cv():
+    d = request.json
+    fn = f"cv_{uuid.uuid4().hex}.pdf"
+    pdf = FPDF()
+    pdf.add_page()
+    # Dizayn
+    pdf.set_fill_color(0, 40, 40)
+    pdf.rect(0, 0, 210, 50, 'F')
+    pdf.set_text_color(0, 255, 204)
+    pdf.set_font("Arial", 'B', 24)
+    pdf.cell(0, 25, d.get('ad', 'PROFESSIONAL CV').upper(), 0, 1, 'C')
+    pdf.ln(15)
+    
+    pdf.set_text_color(0, 0, 0)
+    sections = [
+        ("EMAIL", d.get('mail')), ("TEL", d.get('tel')), 
+        ("UNVAN", d.get('unv')), ("TEHSIL", d.get('teh')), 
+        ("TECRUBE", d.get('tec')), ("BACARIQLAR", d.get('bac'))
+    ]
+    for label, val in sections:
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(40, 10, f"{label}:")
+        pdf.set_font("Arial", '', 12)
+        pdf.multi_cell(0, 10, str(val))
+        pdf.ln(2)
+
+    # Möhür
+    pdf.ln(10)
+    pdf.set_draw_color(150, 0, 0)
+    pdf.set_text_color(150, 0, 0)
+    pdf.ellipse(150, 240, 40, 40, 'D')
+    pdf.set_font("Arial", 'B', 8)
+    pdf.text(155, 260, "ARES SUPREME")
+    pdf.text(158, 265, "OFFICIAL SEAL")
+    
+    pdf.output(os.path.join(PATHS['docs'], fn))
+    return jsonify({"f": fn})
+
+@app.route('/api/st')
+def st(): return jsonify(DL_DATA)
+
+@app.route('/api/ls')
+def ls(): 
+    return jsonify({
+        "vault": os.listdir(PATHS['vault']), 
+        "docs": os.listdir(PATHS['docs']), 
+        "qr": os.listdir(PATHS['qr'])
+    })
+
+@app.route('/api/delete', methods=['POST'])
+def del_file():
+    d = request.json
+    try:
+        os.remove(os.path.join(PATHS[d['folder']], d['fn']))
+        return jsonify({"ok": True})
+    except: return jsonify({"ok": False})
+
+@app.route('/f/<dir>/<n>')
+def serve(dir, n): return send_from_directory(PATHS[dir], n)
+
+@app.route('/')
+def index(): return render_template_string(UI_DATA, clr="#00ffcc")
+
+# --- UI DATA ---
+UI_DATA = """
 <!DOCTYPE html>
 <html lang="az">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-    <title>TITANIC SUPREMACY</title>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>ARES SUPREME</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <style>
-        :root { --gold: #d4af37; --deep-bg: #030303; --neon: #00f3ff; }
-        body { background: var(--deep-bg); color: #fff; font-family: 'Orbitron', sans-serif; margin: 0; }
-        
-        .premium-header { 
-            background: linear-gradient(to bottom, #111, #000);
-            padding: 30px; text-align: center; border-bottom: 1px solid var(--gold);
-            box-shadow: 0 0 30px rgba(212, 175, 55, 0.2);
-            position: sticky; top: 0; z-index: 9999;
-        }
-        .logo { font-size: 26px; font-weight: 900; color: var(--gold); letter-spacing: 8px; text-transform: uppercase; }
-
-        .search-zone { padding: 40px 20px; text-align: center; }
-        .s-input { 
-            width: 100%; max-width: 600px; padding: 20px; background: #0a0a0a; 
-            border: 1px solid #333; color: var(--neon); border-radius: 10px;
-            font-size: 18px; outline: none; transition: 0.5s; text-align: center;
-        }
-        .s-input:focus { border-color: var(--neon); box-shadow: 0 0 20px var(--neon); }
-
-        /* Fullscreen Cinema Player */
-        #cinema-box { display: none; position: fixed; inset: 0; background: #000; z-index: 100000; overflow-y: auto; }
-        .c-header { padding: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #222; }
-        .iframe-container { width: 100%; height: 380px; position: relative; overflow: hidden; background: #050505; }
-        iframe { width: 100%; height: 130%; border: none; margin-top: -55px; } /* Saytın bütün elementlərini kəsir */
-
-        .v-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; padding: 15px; }
-        .v-card { background: #080808; border: 1px solid #151515; border-radius: 12px; overflow: hidden; position: relative; }
-        .v-card img { width: 100%; height: 130px; object-fit: cover; transition: 0.5s; opacity: 0.8; }
-        .v-card:hover img { opacity: 1; transform: scale(1.05); }
-
-        .v-badge { position: absolute; top: 10px; left: 10px; background: var(--gold); color: #000; padding: 4px 8px; font-size: 9px; font-weight: 900; border-radius: 4px; }
-        .v-info { padding: 12px; }
-        .v-title { font-size: 11px; color: #eee; height: 34px; overflow: hidden; margin-bottom: 12px; line-height: 1.4; }
-
-        .v-actions { display: flex; gap: 8px; }
-        .v-btn { flex: 1; padding: 12px; border: none; border-radius: 6px; font-size: 10px; font-weight: bold; cursor: pointer; text-transform: uppercase; }
-        .btn-play { background: var(--gold); color: #000; }
-        .btn-save { background: #222; color: #fff; border: 1px solid #333; }
-
-        .gate { position: fixed; inset: 0; background: #000; display: flex; align-items: center; justify-content: center; z-index: 200000; }
-        .gate input { background: transparent; border: none; border-bottom: 2px solid var(--gold); color: var(--gold); font-size: 40px; text-align: center; outline: none; letter-spacing: 15px; width: 250px; }
+        :root { --neon: {{clr}}; --bg: #000; }
+        body { background: var(--bg); color: var(--neon); font-family: 'JetBrains Mono', monospace; margin: 0; overflow: hidden; }
+        .container { padding: 15px; height: 100vh; overflow-y: auto; padding-bottom: 100px; box-sizing: border-box; }
+        .card { background:rgba(10,10,10,0.9); border:1px solid #222; padding:20px; border-radius:20px; margin-bottom:15px; border-top:3px solid var(--neon); box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        input, select, button, textarea { width:100%; padding:14px; margin:6px 0; border-radius:12px; border:1px solid #333; background:#050505; color:var(--neon); font-weight:bold; outline:none; }
+        button { background:var(--neon); color:#000; border:none; cursor:pointer; text-transform: uppercase; }
+        .nav { position: fixed; bottom:0; width:100%; background:rgba(0,0,0,0.95); display:flex; justify-content:space-around; padding:15px 0; border-top:1px solid #222; backdrop-filter: blur(10px); }
+        .nav i { font-size: 24px; color: #444; transition: 0.3s; }
+        .nav i.active { color: var(--neon); transform: translateY(-5px); text-shadow: 0 0 15px var(--neon); }
+        .panel { display: none; animation: fadeIn 0.4s; } .panel.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .progress-box { background: #111; border-radius: 10px; height: 25px; margin-top: 10px; overflow: hidden; position: relative; border: 1px solid #333; }
+        .progress-bar { background: var(--neon); height: 100%; width: 0%; transition: 0.3s; box-shadow: 0 0 15px var(--neon); }
+        #war-zone { position: fixed; top:0; left:0; width:100%; height:100%; background:#000; z-index:9999; display:none; flex-direction:column; align-items:center; justify-content:center; }
+        .scanner { width: 80%; height: 2px; background: var(--neon); animation: scan 2s infinite; }
+        @keyframes scan { 0% { transform: translateY(-100px); } 100% { transform: translateY(100px); } }
     </style>
 </head>
 <body>
-    {% if not session.get('auth') %}
-    <div class="gate"><form action="/auth" method="POST"><input type="password" name="pin" autofocus></form></div>
-    {% else %}
-    
-    <div id="cinema-box">
-        <div class="c-header">
-            <span style="color:var(--gold); font-weight:900;">TITANIC 8K STREAM</span>
-            <button onclick="closeCinema()" style="background:red; color:#fff; border:none; padding:10px 20px; border-radius:5px; cursor:pointer;">X</button>
+    <div id="war-zone"><div class="scanner"></div><h2 style="margin-top:20px;">PURGE ACTIVE...</h2><div id="p-status">CLEANING...</div></div>
+
+    <div class="container">
+        <div id="p-1" class="panel active">
+            <div class="card">
+                <div id="live-date" style="text-align:center; font-size:10px; margin-bottom:10px;"></div>
+                <div id="flags-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:15px;"></div>
+                <input type="number" id="amt" placeholder="Məbləğ...">
+                <div style="display:flex; gap:10px;">
+                    <select id="from_c"></select>
+                    <select id="to_c"></select>
+                </div>
+                <button onclick="convert()">ÇEVİR</button>
+                <h1 id="res-val" style="text-align:center;">0.00</h1>
+            </div>
         </div>
-        <div class="iframe-container" id="player-render"></div>
-        <div style="padding: 20px;">
-            <h3 style="color:var(--gold); font-size: 14px; border-left: 3px solid var(--gold); padding-left: 10px;">ULTRA-HD ANALİZ: OXŞAR VİDEOLAR</h3>
-            <div id="rel-grid" class="v-grid"></div>
-        </div>
-    </div>
 
-    <div class="premium-header"><div class="logo">TITANIC SUPREMACY</div></div>
-
-    <div class="search-zone">
-        <form action="/search">
-            <input type="text" name="q" class="s-input" placeholder="8K / 4K Deep Search..." value="{{q}}">
-        </form>
-    </div>
-
-    <div class="v-grid">
-        {% for v in res %}
-        <div class="v-card">
-            <div class="v-badge">{{v.q}}</div>
-            <img src="{{v.m}}" loading="lazy">
-            <div class="v-info">
-                <div class="v-title">{{v.t}}</div>
-                <div class="v-actions">
-                    <button class="v-btn btn-play" onclick="openCinema('{{v.e}}', '{{v.t}}')">İZLƏ</button>
-                    <button class="v-btn btn-save" onclick="saveUltra('{{v.d}}')">YÜKLƏ</button>
+        <div id="p-2" class="panel">
+            <div class="card">
+                <h3><i class="fa fa-bolt"></i> OMEGA DL V3</h3>
+                <input id="u" placeholder="YouTube/İnstagram Link...">
+                <select id="m_mode"><option value="video">VİDEO (MP4)</option><option value="mp3">MAHNI (MP3)</option></select>
+                <select id="v_qual"><option value="best">MAX</option><option value="1080">1080p</option><option value="720">720p</option><option value="480">480p</option></select>
+                <button onclick="startDL()">SİSTEMƏ YÜKLƏ</button>
+                <div id="dl-area" style="display:none; margin-top:15px;">
+                    <div id="dl-title" style="font-size:10px;"></div>
+                    <div class="progress-box"><div class="progress-bar" id="p-bar"></div></div>
+                    <div style="display:flex; justify-content:space-between; font-size:11px; margin-top:5px;">
+                        <span id="dl-status"></span><span id="dl-speed"></span>
+                    </div>
                 </div>
             </div>
         </div>
-        {% endfor %}
+
+        <div id="p-3" class="panel">
+            <div class="card">
+                <h3><i class="fa fa-id-card"></i> PRO CV BUILDER</h3>
+                <input id="cv_ad" placeholder="Ad Soyad">
+                <input id="cv_mail" placeholder="Email">
+                <input id="cv_tel" placeholder="Telefon">
+                <input id="cv_unv" placeholder="Ünvan">
+                <textarea id="cv_teh" placeholder="Təhsil..."></textarea>
+                <textarea id="cv_tec" placeholder="Təcrübə..."></textarea>
+                <textarea id="cv_bac" placeholder="Bacarıqlar..."></textarea>
+                <button onclick="mkCV()">CV PDF YARAT</button>
+                <hr style="border:0; border-top:1px solid #222; margin:15px 0;">
+                <input type="file" id="qf">
+                <button onclick="mkQR('img')">ŞƏKİLDƏN QR</button>
+                <div id="gen-res" style="text-align:center; margin-top:10px;"></div>
+            </div>
+        </div>
+
+        <div id="p-5" class="panel">
+            <div id="vault-list"></div>
+            <button onclick="startWar()" style="background:red; color:white; margin-top:20px;">SİSTEMİ TƏMİZLƏ (PURGE)</button>
+        </div>
     </div>
-    {% endif %}
+
+    <div class="nav">
+        <i class="fa fa-coins active" onclick="tab('p-1', this)"></i>
+        <i class="fa fa-download" onclick="tab('p-2', this)"></i>
+        <i class="fa fa-id-card" onclick="tab('p-3', this)"></i>
+        <i class="fa fa-folder-open" onclick="tab('p-5', this)"></i>
+    </div>
 
     <script>
-        function openCinema(url, title) {
-            document.getElementById('player-render').innerHTML = `<iframe src="${url}" allowfullscreen></iframe>`;
-            document.getElementById('cinema-box').style.display = 'block';
-            window.scrollTo(0,0);
-            
-            fetch('/get_rel?q=' + encodeURIComponent(title))
-                .then(r => r.json())
-                .then(data => {
-                    let h = '';
-                    data.forEach(v => {
-                        h += `<div class="v-card"><img src="${v.m}"><div class="v-info"><div class="v-title">${v.t}</div><button class="v-btn btn-play" onclick="openCinema('${v.e}', '${v.t}')">İZLƏ</button></div></div>`;
-                    });
-                    document.getElementById('rel-grid').innerHTML = h;
-                });
+        let rates = {};
+        const flags = {"USD":"🇺🇸","AZN":"🇦🇿","RUB":"🇷🇺","TRY":"🇹🇷","EUR":"🇪🇺","GBP":"🇬🇧"};
+
+        async function loadRates(){
+            const r = await (await fetch('/api/rates')).json();
+            rates = r.rates;
+            document.getElementById('live-date').innerText = r.date_now;
+            let opt = Object.keys(rates).map(c=>`<option value="${c}">${c} ${flags[c]||''}</option>`).join('');
+            document.getElementById('from_c').innerHTML = opt;
+            document.getElementById('to_c').innerHTML = opt;
+            document.getElementById('from_c').value = "AZN";
+            document.getElementById('to_c').value = "USD";
+            document.getElementById('flags-grid').innerHTML = Object.keys(flags).map(c=>`
+                <div style="background:#111; padding:10px; border-radius:10px; text-align:center; font-size:12px;">
+                    ${flags[c]} ${c}: <b>${rates[c].toFixed(2)}</b>
+                </div>
+            `).join('');
         }
 
-        function closeCinema() {
-            document.getElementById('cinema-box').style.display = 'none';
-            document.getElementById('player-render').innerHTML = '';
+        function convert(){
+            let a = document.getElementById('amt').value;
+            let f = document.getElementById('from_c').value;
+            let t = document.getElementById('to_c').value;
+            let res = (a / rates[f]) * rates[t];
+            document.getElementById('res-val').innerText = res.toFixed(2) + " " + t;
         }
 
-        function saveUltra(url) {
-            alert("ULTRA-HD SERVERƏ QOŞULDU. YÜKLƏMƏ BAŞLADI.");
-            fetch('/dl_ultra?url=' + encodeURIComponent(url));
+        async function startDL(){
+            let u = document.getElementById('u').value;
+            if(!u) return;
+            document.getElementById('dl-area').style.display='block';
+            fetch(`/api/dl?u=${encodeURIComponent(u)}&m=${document.getElementById('m_mode').value}&q=${document.getElementById('v_qual').value}`);
+            let itv = setInterval(async () => {
+                let r = await (await fetch('/api/st')).json();
+                document.getElementById('p-bar').style.width = r.p;
+                document.getElementById('dl-status').innerText = r.status + " " + r.p;
+                document.getElementById('dl-speed').innerText = r.s;
+                document.getElementById('dl-title').innerText = r.title;
+                if(r.p == "100%") clearInterval(itv);
+            }, 1000);
         }
+
+        async function mkCV(){
+            let d = { 
+                ad: document.getElementById('cv_ad').value, mail: document.getElementById('cv_mail').value,
+                tel: document.getElementById('cv_tel').value, unv: document.getElementById('cv_unv').value,
+                teh: document.getElementById('cv_teh').value, tec: document.getElementById('cv_tec').value,
+                bac: document.getElementById('cv_bac').value 
+            };
+            let r = await (await fetch('/api/cv', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)})).json();
+            document.getElementById('gen-res').innerHTML = `<a href="/f/docs/${r.f}" download style="color:white">📄 CV YÜKLƏ</a>`;
+        }
+
+        async function mkQR(m){
+            let fd = new FormData(); fd.append('m', m);
+            fd.append('f', document.getElementById('qf').files[0]);
+            let r = await (await fetch('/api/qr', {method:'POST', body:fd})).json();
+            document.getElementById('gen-res').innerHTML = `<img src="/f/qr/${r.f}" style="width:150px; border:5px solid white; border-radius:10px;">`;
+        }
+
+        async function loadVault(){
+            let r = await (await fetch('/api/ls')).json();
+            let h = r.vault.map(f => `
+                <div class="card">
+                    <b>${f}</b><br>
+                    ${f.endsWith('.mp3') ? `<audio src="/f/vault/${f}" controls style="width:100%"></audio>` : `<video src="/f/vault/${f}" controls style="width:100%"></video>`}
+                    <button onclick="delFile('${f}','vault')" style="background:red; margin-top:10px;">SİL</button>
+                </div>
+            `).join('') + r.docs.map(f => `<div class="card">📄 ${f} <button onclick="delFile('${f}','docs')" style="background:red; float:right;">SİL</button></div>`).join('');
+            document.getElementById('vault-list').innerHTML = h || "<center>ANBAR BOŞDUR</center>";
+        }
+
+        async function delFile(fn, folder){
+            if(confirm("SİLİNSİN?")){
+                await fetch('/api/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({fn, folder})});
+                loadVault();
+            }
+        }
+
+        function startWar(){
+            let w = document.getElementById('war-zone'); w.style.display='flex';
+            let s = ["DECRYPTING...","PURGING CACHE...","REMOVING TRACES...","DONE!"];
+            let i = 0;
+            let itv = setInterval(()=>{
+                document.getElementById('p-status').innerText = s[i]; i++;
+                if(i==s.length){ clearInterval(itv); setTimeout(()=>w.style.display='none',1000); }
+            }, 800);
+        }
+
+        function tab(id, el){
+            document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+            document.querySelectorAll('.nav i').forEach(i=>i.classList.remove('active'));
+            document.getElementById(id).classList.add('active'); el.classList.add('active');
+            if(id=='p-5') loadVault();
+        }
+        window.onload = loadRates;
     </script>
 </body>
 </html>
 """
 
-@app.route('/auth', methods=['POST'])
-def auth():
-    if request.form.get('pin') == _decrypt(_0x_sec):
-        session['auth'] = True
-        return redirect('/')
-    return "DENIED", 403
-
-@app.route('/get_rel')
-def get_rel():
-    q = request.args.get('q', '8k')
-    return jsonify(global_vortex_search(q)[:100])
-
-@app.route('/dl_ultra')
-def dl_ultra():
-    url = request.args.get('url')
-    # Ən yüksək keyfiyyəti (4K/8K) birbaşa çəkir
-    threading.Thread(target=lambda: os.system(f"yt-dlp -f 'bestvideo+bestaudio/best' -o '{SAVE_PATH}%(title)s.%(ext)s' {url}")).start()
-    return "ok"
-
-@app.route('/search')
-def search():
-    if not session.get('auth'): return redirect('/')
-    q = request.args.get('q', '8k')
-    return render_template_string(UI, res=global_vortex_search(q), q=q)
-
-@app.route('/')
-def home():
-    if not session.get('auth'): return render_template_string(UI)
-    return render_template_string(UI, res=global_vortex_search("8k ultra hd premium"), q="")
-
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=8080)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, threaded=True)
     
